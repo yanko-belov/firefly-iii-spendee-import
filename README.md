@@ -1,6 +1,6 @@
 # Import Spendee to Firefly III
 
-This is a helper script to help transform [Spendee](https://www.spendee.com/) csv exports into Firefly III, so you can use [fidi](https://docs.firefly-iii.org/data-importer/)
+This is a helper script to help transform [Spendee](https://www.spendee.com/) csv exports into [Firefly III](https://www.firefly-iii.org/).
 
 First you need to convert spendee csv into csv that is compatible for Firefly III.
 
@@ -30,7 +30,7 @@ Choose `import from file`, then choose `final_expense.csv` and `config_expense.j
 
 <img width="1179" alt="Screenshot 2023-02-12 at 22 17 33" src="https://user-images.githubusercontent.com/16457495/218319753-54ea989f-6fe8-4731-8412-880b573f1116.png">
 
-continue the fidi process.
+And Continue the fidi process.
 
 # License
 
