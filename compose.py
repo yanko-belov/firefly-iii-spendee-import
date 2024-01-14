@@ -1,134 +1,171 @@
-"""
-Copyright (c) 2023 Wendy Liga. Licensed under the MIT license, as follows:
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-"""
-
 import csv
 import os
-from datetime import datetime
-from datetime import timedelta
+from datetime import datetime, timedelta
 
-# find possible opposing transaction based on date, type and amount, from other csv files
+exchange_rates = {
+    "EUR-USD": 1.19,
+    "USD-EUR": 0.84,
+    "USD-BGN": 1.65,
+    "BGN-USD": 0.61,
+    "EUR-BGN": 1.96,
+    "BGN-EUR": 0.51,
+    "BGN-RUB": 36.27,
+    "RUB-BGN": 0.0275709953129308,
+    "BGN-GBP": 0.43,
+    "GBP-BGN": 2.31,
+    "GBP-USD": 1.39,
+    "USD-GBP": 0.72,
+    "GBP-EUR": 1.17,
+    "EUR-GBP": 0.85,
+    "RUB-USD": 0.014,
+    "USD-RUB": 73.97,
+    "RUB-EUR": 0.011,
+    "EUR-RUB": 88.51,
+    "RUB-GBP": 0.010,
+    "GBP-RUB": 102.09,
+}
+
+# Find possible opposing transaction based on date, type and amount, from other csv files
 def find_opposing_account_name(search_list, target_transaction):
-  result = {}
+    result = {}
+    source_date = datetime.fromisoformat(target_transaction["Date"])
+    source_transaction_type = target_transaction["Type"]
+    source_amount = target_transaction["Amount"]
+    source_currency = target_transaction["Currency"]
 
-  source_date = datetime.fromisoformat(target_transaction["Date"])
-  source_transaction_type = target_transaction["Type"]
-  source_amount = target_transaction["Amount"]
-  
-  # adjust target transaction amount and type based
-  # we will inverse the amount and change the type based on the source transaction type
-  target_amount = 0.0
-  target_transaction_type = ""
-  if source_transaction_type == "Incoming Transfer":
-    target_amount = source_amount * -1
-    target_transaction_type = "Outgoing Transfer"
-  else:
-    target_amount = abs(source_amount)
-    target_transaction_type = "Incoming Transfer"
+    if source_transaction_type == "Incoming Transfer":
+        target_amount = source_amount * -1
+        target_transaction_type = "Outgoing Transfer"
+    else:
+        target_amount = abs(source_amount)
+        target_transaction_type = "Incoming Transfer"
 
-  for file in search_list:
-    for transaction in search_list[file]:
-      transaction_type = transaction["Type"]
-      transaction_amount = transaction["Amount"]
-      transaction_date = datetime.fromisoformat(transaction["Date"])
-      
-      difference = abs(transaction_date - source_date)
-      allowed_delta = timedelta(minutes=3)
-      
-      if difference < allowed_delta and transaction_type == target_transaction_type and transaction_amount == target_amount :
-        if result:
-          if result["delta"] > difference:
-            # if duplicate, only use transaction with smallest delta
-            result = {
-              "transaction": transaction,
-              "delta": difference
-            }
-        else:
-          # new result
-          result = {
-            "transaction": transaction,
-            "delta": difference
-          }
+    for file in search_list:
+        for transaction in search_list[file]:
+            transaction_amount = transaction["Amount"]
+            if target_transaction_type != transaction["Type"] or (source_amount > 0 and target_amount > 0) or (
+                    source_amount < 0 and target_amount < 0):
+                continue
 
-  if result:
-    return result["transaction"]
-  else:
-    return {}
+            transaction_currency = transaction["Currency"]
+            transaction_date = datetime.fromisoformat(transaction["Date"])
 
-# calculate delta between two transaction dates
-def transaction_date_delta(first_transaction, second_transcation):
-  first = datetime.fromisoformat(first_transaction)
-  second = datetime.fromisoformat(second_transcation)
-  return abs(first - second)  
+            time_difference = abs(transaction_date - source_date)
+            allowed_time_delta = timedelta(minutes=3)
 
+            if source_currency != transaction_currency:
+                exchange_rate = exchange_rates.get(f'{transaction_currency}-{source_currency}')
+                transaction_amount_in_source_currency = abs(transaction_amount * exchange_rate)
+                allowed_tolerance = transaction_amount_in_source_currency * 0.04
+                amount_difference = abs(
+                    transaction_amount_in_source_currency - abs(source_amount))
+
+                if time_difference > allowed_time_delta or amount_difference > allowed_tolerance:
+                    continue
+
+                if result:
+                    if result["time_difference"] > time_difference or result["amount_difference"] > amount_difference:
+                        # if duplicate, only use transaction with the smallest delta
+                        result = {
+                            "transaction": transaction,
+                            "time_difference": time_difference,
+                            "amount_difference": amount_difference,
+                        }
+                else:
+                    # new result
+                    result = {
+                        "transaction": transaction,
+                        "time_difference": time_difference,
+                        "amount_difference": amount_difference,
+                    }
+
+            else:
+                if time_difference > allowed_time_delta or transaction_amount != target_amount:
+                    continue
+
+                if result:
+                    if result["time_difference"] > time_difference:
+                        # if duplicate, only use transaction with smallest delta
+                        result = {
+                            "transaction": transaction,
+                            "time_difference": time_difference,
+                            "amount_difference": 0,
+                        }
+                else:
+                    # new result
+                    result = {
+                        "transaction": transaction,
+                        "time_difference": time_difference,
+                        "amount_difference": 0,
+                    }
+
+    if result:
+        return result["transaction"]
+    else:
+        return {}
+
+
+# Read CSV files and store data
 files = {}
 csv_files = os.listdir('csv')
-
 for file in csv_files:
-  with open(f'csv/{file}', 'r') as f:
-    csvreader = csv.DictReader(f)
-    data = []
+    with open(f'csv/{file}', 'r') as f:
+        csvreader = csv.DictReader(f)
+        data = []
 
-    for row in csvreader:
-      new_row = row.copy()
-      new_row["Amount"] = float(row["Amount"])
-      # replace comma and hash, so csv can be parsed correctly
-      new_row["Note"] = row["Note"].replace(',', " ").replace('#', "")
-      # replace comma and hash, so csv can be parsed correctly
-      new_row["Labels"] = row["Labels"].replace(',', " ").replace('#', "")
-      new_row["Author"] = ""
+        for row in csvreader:
+            new_row = row.copy()
+            new_row["Amount"] = float(row["Amount"])
+            new_row["Note"] = row["Note"].replace(',', " ").replace('#', "")
+            new_row["Labels"] = row["Labels"].replace(',', " ").replace('#', "")
+            new_row["Author"] = ""
+            data.append(new_row)
 
-      data.append(new_row)
+        files[f'csv/{file}'] = data
 
-    files[f'csv/{file}'] = data
+# Process transactions
+final_transfer_csv_content = [
+    'amount,currency_code,foreign_amount,foreign_currency,description,date,source_name,destination_name,category,tags']
+final_expense_csv_content = ['amount,currency_code,description,date,source_name,category,tags']
 
-final_transfer_csv_content = ['Date,Wallet,Type,"Category name",Amount,Currency,Note,Labels,Author,"Account Name","Opposing Account Name"']
-final_expense_csv_content = ['Date,Wallet,Type,"Category name",Amount,Currency,Note,Labels,Author']
 for file in files:
-  for transaction in files[file]:
-    transaction_date = transaction["Date"]
-    transaction_type = transaction["Type"]
-    transaction_amount = abs(transaction["Amount"])
+    for transaction in files[file]:
+        transaction_type = transaction["Type"]
+        transaction_amount = transaction["Amount"]
+        transaction_currency_code = transaction["Currency"]
+        transaction_description = transaction["Note"]
+        transaction_date = transaction["Date"]
+        transaction_category = transaction["Category name"]
+        transaction_tags = transaction["Labels"]
+        transaction_source_name = transaction["Wallet"]
 
-    if transaction_type == "Outgoing Transfer":
-      search_list_files = files.copy()
-      del search_list_files[file]
-      
-      # search potential opposing transaction
-      potential_opposing_transaction = find_opposing_account_name(search_list_files, transaction)
+        transaction_foreign_amount = ""
+        transaction_foreign_currency_code = ""
+        transaction_destination_name = ""
 
-      account_name = ""
-      opposing_account_name = ""
+        if transaction_type in ["Outgoing Transfer", "Incoming Transfer"]:
+            search_list_files = files.copy()
+            del search_list_files[file]
 
-      if potential_opposing_transaction:
-        account_name = potential_opposing_transaction["Wallet"]
-        opposing_account_name = transaction["Wallet"]
-      else:
-        account_name = "Deleted Account"
-        opposing_account_name = transaction["Wallet"]
+            potential_opposing_transaction = find_opposing_account_name(search_list_files, transaction)
+            account_name = ""
+            opposing_account_name = ""
 
-      final_transfer_csv_content.append(f'{transaction_date},{transaction["Wallet"]},{transaction["Type"]},{transaction["Category name"]},{transaction_amount},{transaction["Currency"]},{transaction["Note"]},{transaction["Labels"]},{transaction["Author"]},{account_name},{opposing_account_name}')
-    elif transaction_type == "Incoming Transfer":
-      search_list_files = files.copy()
-      del search_list_files[file]
-      
-      potential_opposing_transaction = find_opposing_account_name(search_list_files, transaction)
+            if potential_opposing_transaction:
+                transaction_foreign_amount = potential_opposing_transaction["Amount"]
+                transaction_foreign_currency_code = potential_opposing_transaction["Currency"]
+                transaction_destination_name = potential_opposing_transaction["Wallet"]
+                if transaction_type == "Incoming Transfer":
+                    continue
+            else:
+                transaction_destination_name = "(cash)"
 
-      # we will only add new transfer transcation if it is coming from "Out of Spendee" account
-      # because if not, we will create 2 transfer that will cancel each other.
-      if len(potential_opposing_transaction) == 0:
-        opposing_account_name = "Deleted Account"
-        account_name = transaction["Wallet"]
-        final_transfer_csv_content.append(f'{transaction_date},{transaction["Wallet"]},{transaction["Type"]},{transaction["Category name"]},{transaction_amount},{transaction["Currency"]},{transaction["Note"]},{transaction["Labels"]},{transaction["Author"]},{account_name},{opposing_account_name}')
+            final_transfer_csv_content.append(
+                f'{transaction_amount},{transaction_currency_code},{transaction_foreign_amount},{transaction_foreign_currency_code},{transaction_description},{transaction_date},{transaction_source_name},{transaction_destination_name},{transaction_category},{transaction_tags}')
 
-    elif transaction_type == "Income" or transaction_type == "Expense":
-      final_expense_csv_content.append(f'{transaction_date},{transaction["Wallet"]},{transaction["Type"]},{transaction["Category name"]},{transaction["Amount"]},{transaction["Currency"]},{transaction["Note"]},{transaction["Labels"]},{transaction["Author"]}')
+        else:
+            final_expense_csv_content.append(
+                f'{transaction_amount},{transaction_currency_code},{transaction_description},{transaction_date},{transaction_source_name},{transaction_category},{transaction_tags}')
 
 f = open("final_expense.csv", "w")
 f.write("\n".join(final_expense_csv_content))
